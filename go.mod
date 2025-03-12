@@ -1,4 +1,4 @@
-module x/y
+module github.com/jeevan553/drone-httprequest-plugin
 
 go 1.18
 

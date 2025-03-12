@@ -16,7 +16,7 @@ import (
 
 // Config struct for environment variables
 type Config struct {
-	URL         string `envconfig:"PLUGIN_URL" required:"true"`
+	Url         string `envconfig:"PLUGIN_URL" required:"true"`
 	HttpMethod  string `envconfig:"PLUGIN_HTTP_METHOD" required:"true"`
 	Headers     string `envconfig:"PLUGIN_HEADERS"`
 	ContentType string `envconfig:"PLUGIN_CONTENT_TYPE"`
@@ -35,47 +35,40 @@ func ExecuteRequest() {
 		return
 	}
 
-	// HTTP client setup with optional custom CA certificate
-	client := &http.Client{Timeout: 10 * time.Second}
-	tlsConfig := &tls.Config{}
+	// Load CA certificates
+	caCertPool, err := LoadCACertificates(cfg.CACertPath)
+	if err != nil {
+		fmt.Println("Error loading CA certificate:", err)
+		return
+	}
 
-	if cfg.CACertPath != "" {
-		caCert, err := ioutil.ReadFile(cfg.CACertPath)
-		if err != nil {
-			fmt.Println("Error loading custom CA certificate:", err)
-			return
-		}
-		caCertPool := x509.NewCertPool()
-		caCertPool.AppendCertsFromPEM(caCert)
+	// HTTP client setup
+	tlsConfig := &tls.Config{}
+	if caCertPool != nil {
 		tlsConfig.RootCAs = caCertPool
-		client.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+	}
+	client := &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsConfig},
+		Timeout:   10 * time.Second,
 	}
 
 	// Prepare request body
-	var requestBody *bytes.Reader
-	if cfg.RequestBody != "" {
-		requestBody = bytes.NewReader([]byte(cfg.RequestBody))
-	} else {
-		requestBody = bytes.NewReader(nil)
-	}
+	requestBody := bytes.NewReader([]byte(cfg.RequestBody))
 
 	// Create HTTP request
-	req, err := http.NewRequest(strings.ToUpper(cfg.HttpMethod), cfg.URL, requestBody)
+	req, err := http.NewRequest(strings.ToUpper(cfg.HttpMethod), cfg.Url, requestBody)
 	if err != nil {
 		fmt.Println("Error creating request:", err)
 		return
 	}
 
-	// Set content type
+	// Set headers
 	if cfg.ContentType != "" {
 		req.Header.Set("Content-Type", cfg.ContentType)
 	}
-
-	// Set additional headers
 	if cfg.Headers != "" {
 		var headersMap map[string]string
-		err := json.Unmarshal([]byte(cfg.Headers), &headersMap)
-		if err != nil {
+		if err := json.Unmarshal([]byte(cfg.Headers), &headersMap); err != nil {
 			fmt.Println("Invalid headers format:", err)
 			return
 		}
@@ -102,4 +95,32 @@ func ExecuteRequest() {
 	// Print response
 	fmt.Println("Response Code:", resp.StatusCode)
 	fmt.Println("Response Body:", string(body))
+}
+
+// LoadCACertificates loads system and custom CA certificates
+func LoadCACertificates(caCertPath string) (*x509.CertPool, error) {
+	// Load system CA pool
+	sysCertPool, err := x509.SystemCertPool()
+	if err != nil {
+		fmt.Println("Warning: Failed to load system CA certificates:", err)
+		sysCertPool = x509.NewCertPool()
+	}
+
+	// Load custom CA if provided
+	if caCertPath == "" {
+		return sysCertPool, nil
+	}
+
+	caCert, err := ioutil.ReadFile(caCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read CA certificate file: %w", err)
+	}
+
+	if ok := sysCertPool.AppendCertsFromPEM(caCert); !ok {
+		fmt.Println("Warning: Failed to append custom CA certificate")
+	} else {
+		fmt.Println("Custom CA certificate loaded successfully")
+	}
+
+	return sysCertPool, nil
 }
